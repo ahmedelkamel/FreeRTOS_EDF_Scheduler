@@ -215,7 +215,7 @@ count overflows. */
  * Place the task represented by pxTCB into the appropriate ready list for
  * the task.  It is inserted at the end of the list.
  */
-#if configUSE_EDF_SCHEDULER == 0 /* E.C. : */
+#if (configUSE_EDF_SCHEDULER == 0) /* E.C. : */
 	#define prvAddTaskToReadyList( pxTCB ) 																\
 		traceMOVED_TASK_TO_READY_STATE( pxTCB );														\
 		taskRECORD_READY_PRIORITY( ( pxTCB )->uxPriority );												\
@@ -825,11 +825,15 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB ) PRIVILEGED_FUNCTION;
 
 			prvInitialiseNewTask( pxTaskCode, pcName, ( uint32_t ) usStackDepth, pvParameters, uxPriority, pxCreatedTask, pxNewTCB, NULL );
 			
-			/*E.C. : initialize the period*/
-			pxNewTCB->xTaskPeriod = period;
-			/*E.C. : insert the period value in the state list item before to add the task in RL: */
-			listSET_LIST_ITEM_VALUE( &( ( pxNewTCB )->xStateListItem ), 
-									(pxNewTCB)->xTaskPeriod + xTickCount /* currentTick */ );	
+			#if( configUSE_EDF_SCHEDULER == 1 )
+			{
+				/*E.C. : initialize the period*/
+				pxNewTCB->xTaskPeriod = period;
+				/*E.C. : insert the period value in the state list item before to add the task in RL: */
+				listSET_LIST_ITEM_VALUE( &( pxNewTCB->xStateListItem ), 
+				pxNewTCB->xTaskPeriod + xTickCount /* currentTick */ );	
+			}
+			#endif
 	
 			prvAddNewTaskToReadyList( pxNewTCB );
 			xReturn = pdPASS;
@@ -2132,6 +2136,9 @@ BaseType_t xReturn;
 										   portPRIVILEGE_BIT, /* In effect ( tskIDLE_PRIORITY | portPRIVILEGE_BIT ), but tskIDLE_PRIORITY is zero. */
 										   &xIdleTaskHandle,
 										   initIDLEPeriod ); /*lint !e961 MISRA exception, justified as it is not a redundant explicit cast to all supported compilers. */
+			/* E.C. */
+			/* Set current TCB = head of list (earliest deadline) */								 
+			pxCurrentTCB = listGET_HEAD_ENTRY(&xReadyTasksListEDF)->pvOwner;
 		}
 		#else
 			/* The Idle task is being created using dynamically allocated RAM. */
@@ -2871,6 +2878,7 @@ BaseType_t xSwitchRequired = pdFALSE;
 		{
 			for( ;; )
 			{
+				/* Delayed List is empty */
 				if( listLIST_IS_EMPTY( pxDelayedTaskList ) != pdFALSE )
 				{
 					/* The delayed list is empty.  Set xNextTaskUnblockTime
@@ -2919,6 +2927,17 @@ BaseType_t xSwitchRequired = pdFALSE;
 						mtCOVERAGE_TEST_MARKER();
 					}
 
+					/* E.C. : Calculate and update task deadline after removal from delayed/waiting list,
+						 and before insertion into EDF Ready List */
+					#if ( configUSE_EDF_SCHEDULER == 1 )
+					{
+						listSET_LIST_ITEM_VALUE( &(pxTCB->xStateListItem),
+																		pxTCB->xTaskPeriod + xTaskGetTickCount() /*xTickCount*/);	
+					}
+					#endif
+					/* prvAddTaskToReadyList: places task in the EDF Ready List,
+						 if configUSE_EDF_SCHEDULER is set to 1 */
+					
 					/* Place the unblocked task into the appropriate ready
 					list. */
 					prvAddTaskToReadyList( pxTCB );
@@ -2927,18 +2946,38 @@ BaseType_t xSwitchRequired = pdFALSE;
 					context switch if preemption is turned off. */
 					#if (  configUSE_PREEMPTION == 1 )
 					{
-						/* Preemption is on, but a context switch should
-						only be performed if the unblocked task has a
-						priority that is equal to or higher than the
-						currently executing task. */
-						if( pxTCB->uxPriority >= pxCurrentTCB->uxPriority )
+						/* E.C. Context Switch based on Earliest Deadline */
+						#if ( configUSE_EDF_SCHEDULER == 1 )
 						{
-							xSwitchRequired = pdTRUE;
+							/* Context switch should only be performed if the 
+							unblocked task has a deadline that is equal to or lower 
+							than the currently executing task. */
+							if( pxTCB->xStateListItem.xItemValue <= pxCurrentTCB->xStateListItem.xItemValue )
+							{
+								xSwitchRequired = pdTRUE;
+							}
+							else
+							{
+								mtCOVERAGE_TEST_MARKER();
+							}
 						}
-						else
+						#else
 						{
-							mtCOVERAGE_TEST_MARKER();
+							/* Original piece of code (EDF scheduler not in use) */
+							/* Preemption is on, but a context switch should
+							only be performed if the unblocked task has a
+							priority that is equal to or higher than the
+							currently executing task. */
+							if( pxTCB->uxPriority >= pxCurrentTCB->uxPriority )
+							{
+								xSwitchRequired = pdTRUE;
+							}
+							else
+							{
+								mtCOVERAGE_TEST_MARKER();
+							}
 						}
+						#endif
 					}
 					#endif /* configUSE_PREEMPTION */
 				}
@@ -3548,6 +3587,15 @@ static portTASK_FUNCTION( prvIdleTask, pvParameters )
 		is responsible for freeing the deleted task's TCB and stack. */
 		prvCheckTasksWaitingTermination();
 
+		/*E.C. : Update IDLE task deadline */
+		#if ( configUSE_EDF_SCHEDULER == 1 )
+		{
+			listSET_LIST_ITEM_VALUE( &( xIdleTaskHandle->xStateListItem ),
+															xIdleTaskHandle->xTaskPeriod + xTaskGetTickCount() /*xTickCount*/ );	
+			/* taskYIELD(); */
+		}
+		#endif
+		
 		#if ( configUSE_PREEMPTION == 0 )
 		{
 			/* If we are not using preemption we keep forcing a task switch to
