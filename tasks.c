@@ -2123,12 +2123,12 @@ BaseType_t xReturn;
 	}
 	#else
 	{
-		/* The IDLE task is initialized with a period of initIDLEPeriod = 100. 
+		/* The IDLE task is initialized with a period of initIDLEPeriod = 200. 
 		 * We assume that no task can have a period greater than initIDLEPeriod */
 		/*E.C. : */
 		#if (configUSE_EDF_SCHEDULER == 1)
 		{
-			TickType_t initIDLEPeriod = 100;
+			TickType_t initIDLEPeriod = 200;
 			xReturn = xTaskCreatePeriodic( prvIdleTask,
 										   configIDLE_TASK_NAME, 
 										   configMINIMAL_STACK_SIZE, 
